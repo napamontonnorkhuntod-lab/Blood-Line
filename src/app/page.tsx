@@ -37,6 +37,10 @@ interface DbItem {
   id: string | number;
   name: string;
   count: number;
+  iconName?: string;
+  icon_name?: string;
+  image?: string;
+  badge?: string;
 }
 
 interface DbLog {
@@ -153,10 +157,15 @@ export default function StockManagerPage() {
       } else if (dbItems) {
         setIsDatabaseConnected(true);
         if (dbItems.length > 0) {
-          const mappedItems = INITIAL_ITEMS.map((initItem) => {
-            const found = dbItems.find((db: DbItem) => String(db.id) === String(initItem.id) || db.name === initItem.name);
-            return found ? { ...initItem, count: Number(found.count) || 0 } : initItem;
-          });
+          const mappedItems: Item[] = dbItems.map((db: DbItem) => ({
+            id: String(db.id),
+            name: db.name || "Item",
+            count: Number(db.count) || 0,
+            iconName: db.iconName || db.icon_name || "Package",
+            image: db.image || `/image/${db.id}.png`,
+            badge: db.badge || "Stock",
+          }));
+          mappedItems.sort((a, b) => Number(a.id) - Number(b.id));
           setItems(mappedItems);
         }
       } else {
