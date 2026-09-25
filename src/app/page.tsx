@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Package,
   Plus,
+  Minus,
   Clock,
   User,
   History,
@@ -12,7 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Pencil,
-  RotateCcw
+  RotateCcw,
+  AlertCircle
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -30,7 +32,8 @@ interface LogEntry {
   timestamp: string;
   username: string;
   itemName: string;
-  quantityAdded: number;
+  quantityAdded: number; // Positive for addition (+), Negative for withdrawal (-)
+  remark?: string; // Notes / Recipient
 }
 
 interface DbItem {
@@ -51,6 +54,8 @@ interface DbLog {
   itemName?: string;
   quantity_added?: number;
   quantityAdded?: number;
+  remark?: string;
+  note?: string;
   created_at?: string;
 }
 
@@ -115,13 +120,13 @@ const INITIAL_ITEMS: Item[] = [
 
 const LOGS_PER_PAGE = 5;
 
-// Helper function to sanitize username (trim, strip dangerous characters, limit length)
-const sanitizeUsername = (name: string): string => {
-  if (!name) return "";
-  return name
+// Helper function to sanitize text input
+const sanitizeText = (input: string): string => {
+  if (!input) return "";
+  return input
     .trim()
     .replace(/[<>'"]/g, "") // Strip dangerous HTML/Quote characters
-    .slice(0, 40); // Limit to 40 characters maximum
+    .slice(0, 50); // Limit length
 };
 
 export default function StockManagerPage() {
@@ -140,6 +145,12 @@ export default function StockManagerPage() {
   const [filterDate, setFilterDate] = useState<string>("");
   const [filterActor, setFilterActor] = useState<string>("");
   const [filterItem, setFilterItem] = useState<string>("");
+
+  // Withdrawal Modal States
+  const [withdrawModalItem, setWithdrawModalItem] = useState<Item | null>(null);
+  const [withdrawAmountInput, setWithdrawAmountInput] = useState<string>("");
+  const [withdrawRemarkInput, setWithdrawRemarkInput] = useState<string>("");
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
   // Load Data from Supabase with localStorage fallback
   const loadData = useCallback(async () => {
@@ -202,7 +213,8 @@ export default function StockManagerPage() {
           timestamp: log.timestamp || (log.created_at ? new Date(log.created_at).toLocaleString("th-TH") : ""),
           username: log.username || "Unknown",
           itemName: log.item_name || log.itemName || "Item",
-          quantityAdded: Number(log.quantity_added || log.quantityAdded) || 0,
+          quantityAdded: Number(log.quantity_added ?? log.quantityAdded ?? 0),
+          remark: log.remark || log.note || undefined,
         }));
         setLogs(mappedLogs);
       } else {
@@ -230,7 +242,7 @@ export default function StockManagerPage() {
     loadData();
   }, [loadData]);
 
-  // Filter logs by date (YYYY-MM-DD input date), actor username, or item name separately
+  // Filter logs by date (YYYY-MM-DD input date), actor username, or item name
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
       // 1. Filter by Date
@@ -256,10 +268,12 @@ export default function StockManagerPage() {
         if (!log.username.toLowerCase().includes(actorTerm)) return false;
       }
 
-      // 3. Filter by Item Name
+      // 3. Filter by Item Name or Remark
       if (filterItem.trim()) {
         const itemTerm = filterItem.trim().toLowerCase();
-        if (!log.itemName.toLowerCase().includes(itemTerm)) return false;
+        const matchItemName = log.itemName.toLowerCase().includes(itemTerm);
+        const matchRemark = log.remark ? log.remark.toLowerCase().includes(itemTerm) : false;
+        if (!matchItemName && !matchRemark) return false;
       }
 
       return true;
@@ -290,7 +304,7 @@ export default function StockManagerPage() {
 
   const handleSaveUsername = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = sanitizeUsername(inputName);
+    const cleanName = sanitizeText(inputName);
     if (!cleanName) return;
 
     setUsername(cleanName);
@@ -304,6 +318,7 @@ export default function StockManagerPage() {
     }));
   }, []);
 
+  // Handler for Adding Stock (+ Amount)
   const handleAddItemCount = useCallback(async (item: Item) => {
     const rawVal = quantities[item.id];
     const amount = parseInt(rawVal, 10);
@@ -336,7 +351,8 @@ export default function StockManagerPage() {
       timestamp: formattedTimestamp,
       username: username || "Unknown User",
       itemName: item.name,
-      quantityAdded: amount,
+      quantityAdded: amount, // Positive for addition
+      remark: "เพิ่มเข้าคลัง",
     };
 
     const updatedLogs = [newEntry, ...logs];
@@ -351,17 +367,13 @@ export default function StockManagerPage() {
 
     // Async Update Supabase Database
     try {
-      // 1. Update item count in Supabase
       const { error: updateErr } = await supabase
         .from("items")
         .update({ count: newCount })
         .eq("id", String(item.id));
 
-      if (updateErr) {
-        console.error("Supabase items update error:", updateErr.message, updateErr);
-      }
+      if (updateErr) console.error("Supabase items update error:", updateErr.message);
 
-      // 2. Insert new activity log in Supabase
       const { error: logErr } = await supabase
         .from("activity_logs")
         .insert([
@@ -370,16 +382,117 @@ export default function StockManagerPage() {
             username: username || "Unknown User",
             item_name: item.name,
             quantity_added: amount,
+            remark: "เพิ่มเข้าคลัง",
           }
         ]);
 
-      if (logErr) {
-        console.error("Supabase activity_logs insert error:", logErr.message, logErr);
-      }
+      if (logErr) console.error("Supabase activity_logs insert error:", logErr.message);
     } catch (dbErr) {
       console.warn("Supabase async write warning:", dbErr);
     }
   }, [items, logs, quantities, username]);
+
+  // Open Withdrawal Modal
+  const handleOpenWithdrawModal = useCallback((item: Item) => {
+    setWithdrawModalItem(item);
+    setWithdrawAmountInput(quantities[item.id] || "1");
+    setWithdrawRemarkInput("");
+    setWithdrawError(null);
+  }, [quantities]);
+
+  // Handler for Confirming Item Withdrawal (- Amount)
+  const handleConfirmWithdraw = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!withdrawModalItem) return;
+
+    const amount = parseInt(withdrawAmountInput, 10);
+    if (isNaN(amount) || amount <= 0) {
+      setWithdrawError("กรุณาระบุจำนวนที่จะเบิกให้ถูกต้อง (มากกว่า 0)");
+      return;
+    }
+
+    if (amount > withdrawModalItem.count) {
+      setWithdrawError(`จำนวนสินค้าคงเหลือไม่พอ (คงเหลือ ${withdrawModalItem.count} ชิ้น)`);
+      return;
+    }
+
+    const cleanRemark = sanitizeText(withdrawRemarkInput);
+    if (!cleanRemark) {
+      setWithdrawError("กรุณาระบุว่าเบิกสินค้าให้ใคร หรือหมายเหตุการเบิก (จำเป็น)");
+      return;
+    }
+
+    const newCount = withdrawModalItem.count - amount;
+
+    // Update UI immediately
+    const updatedItems = items.map((i) =>
+      i.id === withdrawModalItem.id ? { ...i, count: newCount } : i
+    );
+    setItems(updatedItems);
+    localStorage.setItem("fixed_items_stock", JSON.stringify(updatedItems));
+
+    const now = new Date();
+    const formattedTimestamp = now.toLocaleString("th-TH", {
+      timeZone: "Asia/Bangkok",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+
+    const newEntry: LogEntry = {
+      id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
+      timestamp: formattedTimestamp,
+      username: username || "Unknown User",
+      itemName: withdrawModalItem.name,
+      quantityAdded: -amount, // Negative number for withdrawal e.g. -1
+      remark: cleanRemark ? `เบิกให้: ${cleanRemark}` : "เบิกออก",
+    };
+
+    const updatedLogs = [newEntry, ...logs];
+    setLogs(updatedLogs);
+    localStorage.setItem("fixed_activity_logs", JSON.stringify(updatedLogs));
+    setCurrentPage(1);
+
+    // Reset input states
+    setQuantities((prev) => ({
+      ...prev,
+      [withdrawModalItem.id]: "",
+    }));
+    setWithdrawModalItem(null);
+    setWithdrawAmountInput("");
+    setWithdrawRemarkInput("");
+    setWithdrawError(null);
+
+    // Async Update Supabase Database
+    try {
+      const { error: updateErr } = await supabase
+        .from("items")
+        .update({ count: newCount })
+        .eq("id", String(withdrawModalItem.id));
+
+      if (updateErr) console.error("Supabase items update error:", updateErr.message);
+
+      const { error: logErr } = await supabase
+        .from("activity_logs")
+        .insert([
+          {
+            timestamp: formattedTimestamp,
+            username: username || "Unknown User",
+            item_name: withdrawModalItem.name,
+            quantity_added: -amount,
+            remark: cleanRemark ? `เบิกให้: ${cleanRemark}` : "เบิกออก",
+          }
+        ]);
+
+      if (logErr) console.error("Supabase activity_logs insert error:", logErr.message);
+    } catch (dbErr) {
+      console.warn("Supabase async write warning:", dbErr);
+    }
+  }, [items, logs, username, withdrawAmountInput, withdrawModalItem, withdrawRemarkInput]);
 
   if (!isLoaded) {
     return (
@@ -419,7 +532,7 @@ export default function StockManagerPage() {
                 )}
               </div>
               <p className="text-xs sm:text-sm text-slate-500">
-                ระบบจัดการสต็อกสินค้าและบันทึกประวัติการเพิ่มสินค้า
+                ระบบจัดการสต็อกสินค้าและบันทึกประวัติการเพิ่มสินค้า / เบิกสินค้า
               </p>
             </div>
           </div>
@@ -514,9 +627,9 @@ export default function StockManagerPage() {
                   </div>
                 </div>
 
-                {/* Input & Add Button */}
-                <div className="pt-1">
-                  <div className="flex items-center gap-2">
+                {/* Input & Action Buttons (เพิ่ม / เบิก) */}
+                <div className="pt-1 space-y-2">
+                  <div className="flex items-center gap-1.5">
                     <input
                       type="number"
                       min="1"
@@ -530,16 +643,27 @@ export default function StockManagerPage() {
                           handleAddItemCount(item);
                         }
                       }}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 font-mono transition-all"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 font-mono transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => handleAddItemCount(item)}
                       disabled={!quantities[item.id] || parseInt(quantities[item.id], 10) <= 0}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-semibold text-sm flex items-center gap-1 transition-all shadow-xs active:scale-[0.98] cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+                      className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-semibold text-xs flex items-center gap-1 transition-all shadow-xs active:scale-[0.98] cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+                      title="เพิ่มเข้าคลัง"
                     >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
+                      <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                       เพิ่ม
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenWithdrawModal(item)}
+                      disabled={item.count <= 0}
+                      className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-semibold text-xs flex items-center gap-1 transition-all shadow-xs active:scale-[0.98] cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+                      title="เบิกสินค้าออก"
+                    >
+                      <Minus className="w-3.5 h-3.5 stroke-[2.5]" />
+                      เบิก
                     </button>
                   </div>
                 </div>
@@ -632,14 +756,15 @@ export default function StockManagerPage() {
                     <th className="py-3.5 px-6">วัน-เวลา (Date & Time)</th>
                     <th className="py-3.5 px-6">ผู้ทำรายการ (Actor)</th>
                     <th className="py-3.5 px-6">ชื่อไอเทม (Item Name)</th>
-                    <th className="py-3.5 px-6 text-right">จำนวนที่เพิ่ม (Added)</th>
+                    <th className="py-3.5 px-6">หมายเหตุ / เบิกให้ใคร</th>
+                    <th className="py-3.5 px-6 text-right">จำนวน</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
                   {paginatedLogs.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={4}
+                        colSpan={5}
                         className="py-8 text-center text-slate-400 font-medium"
                       >
                         {(filterDate || filterActor || filterItem)
@@ -666,8 +791,23 @@ export default function StockManagerPage() {
                         <td className="py-3.5 px-6 font-semibold text-slate-900">
                           {log.itemName}
                         </td>
-                        <td className="py-3.5 px-6 text-right font-mono font-bold text-emerald-600">
-                          +{log.quantityAdded}
+                        <td className="py-3.5 px-6 text-xs font-medium">
+                          {log.quantityAdded < 0 ? (
+                            <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200/80 px-2.5 py-1 rounded-lg font-medium">
+                              {log.remark || "เบิกออก"}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">
+                              {log.remark || "เพิ่มเข้าคลัง"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-6 text-right font-mono font-bold">
+                          {log.quantityAdded < 0 ? (
+                            <span className="text-rose-600">{log.quantityAdded}</span>
+                          ) : (
+                            <span className="text-emerald-600">+{log.quantityAdded}</span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -727,6 +867,91 @@ export default function StockManagerPage() {
           </div>
         </section>
       </div>
+
+      {/* WITHDRAWAL MODAL (เบิกสินค้า) */}
+      {withdrawModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl p-6 sm:p-8 space-y-5">
+            <div className="text-center space-y-2">
+              <div className="mx-auto w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 mb-2">
+                <Minus className="w-6 h-6 stroke-[2.5]" />
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center justify-center gap-2">
+                เบิกสินค้า: {withdrawModalItem.name}
+              </h2>
+              <div className="inline-block bg-slate-100 border border-slate-200 rounded-xl px-3 py-1 text-xs text-slate-600 font-medium">
+                คงเหลือในคลัง: <span className="font-bold text-emerald-600 font-mono text-sm">{withdrawModalItem.count}</span> ชิ้น
+              </div>
+            </div>
+
+            {withdrawError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{withdrawError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleConfirmWithdraw} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                  จำนวนที่จะเบิก (Quantity)
+                </label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  max={withdrawModalItem.count}
+                  placeholder="ระบุจำนวน"
+                  value={withdrawAmountInput}
+                  onChange={(e) => setWithdrawAmountInput(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all font-mono text-sm"
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                  <span>เบิกให้ใคร / หมายเหตุ (Recipient / Note)</span>
+                  <span className="text-rose-600 font-bold text-[11px]">* จำเป็น</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={50}
+                  placeholder="เช่น เบิกให้ นาย A, ใช้งานในกิจกรรม"
+                  value={withdrawRemarkInput}
+                  onChange={(e) => {
+                    setWithdrawRemarkInput(e.target.value);
+                    if (withdrawError) setWithdrawError(null);
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all text-sm font-medium"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWithdrawModalItem(null);
+                    setWithdrawError(null);
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm transition-all cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={!withdrawAmountInput || parseInt(withdrawAmountInput, 10) <= 0 || !withdrawRemarkInput.trim()}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-bold text-sm flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-[0.98] cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <Minus className="w-4 h-4 stroke-[2.5]" />
+                  เบิกสินค้า
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* USERNAME INPUT MODAL */}
       {showModal && (
