@@ -11,7 +11,9 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
-  Pencil
+  Pencil,
+  Search,
+  X
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -130,6 +132,7 @@ export default function StockManagerPage() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isDatabaseConnected, setIsDatabaseConnected] = useState<boolean>(false);
   const [dbErrorMessage, setDbErrorMessage] = useState<string | null>(null);
+  const [logSearchTerm, setLogSearchTerm] = useState<string>("");
 
   // Load Data from Supabase with localStorage fallback
   const loadData = useCallback(async () => {
@@ -215,13 +218,33 @@ export default function StockManagerPage() {
     loadData();
   }, [loadData]);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(logs.length / LOGS_PER_PAGE)), [logs.length]);
+  // Filter logs by date, time, username, or item name
+  const filteredLogs = useMemo(() => {
+    if (!logSearchTerm.trim()) return logs;
+    const term = logSearchTerm.trim().toLowerCase();
+    return logs.filter(
+      (log) =>
+        log.timestamp.toLowerCase().includes(term) ||
+        log.username.toLowerCase().includes(term) ||
+        log.itemName.toLowerCase().includes(term)
+    );
+  }, [logs, logSearchTerm]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredLogs.length / LOGS_PER_PAGE)),
+    [filteredLogs.length]
+  );
+  
   const startIndex = (currentPage - 1) * LOGS_PER_PAGE;
 
   const paginatedLogs = useMemo(() => {
     const start = (currentPage - 1) * LOGS_PER_PAGE;
-    return logs.slice(start, start + LOGS_PER_PAGE);
-  }, [logs, currentPage]);
+    return filteredLogs.slice(start, start + LOGS_PER_PAGE);
+  }, [filteredLogs, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [logSearchTerm]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -429,6 +452,7 @@ export default function StockManagerPage() {
                   {/* Item Image */}
                   <div className="flex justify-center mb-4">
                     <div className="w-24 h-24 sm:w-28 sm:h-28 p-2 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden">
+                      {/* eslint-disable-next-html-element-suppression */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={item.image || `/image/${item.id}.png`}
@@ -488,16 +512,42 @@ export default function StockManagerPage() {
           </div>
         </section>
 
-        {/* SECTION 2: Activity Audit Logs Table with Pagination */}
+        {/* SECTION 2: Activity Audit Logs Table with Pagination & Search Filter */}
         <section className="space-y-4 pt-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
               <History className="w-5 h-5 text-emerald-600" />
               บันทึกประวัติการทำรายการ (Activity Logs)
             </h2>
-            <span className="text-xs font-medium text-slate-500 bg-white border border-slate-200 px-3 py-1 rounded-full font-mono self-start sm:self-auto shadow-2xs">
-              ทั้งหมด {logs.length} รายการ (แสดงหน้าละ 5 รายการ)
-            </span>
+
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              {/* Search Filter Input Bar */}
+              <div className="relative flex-1 sm:w-72">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Search className="w-4 h-4" />
+                </div>
+                <input
+                  type="text"
+                  placeholder="ค้นหา (วัน, เวลา, ชื่อคน, ไอเทม)..."
+                  value={logSearchTerm}
+                  onChange={(e) => setLogSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 shadow-2xs font-medium transition-all"
+                />
+                {logSearchTerm && (
+                  <button
+                    onClick={() => setLogSearchTerm("")}
+                    className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                    title="ล้างคำค้นหา"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <span className="text-xs font-medium text-slate-500 bg-white border border-slate-200 px-3 py-2 rounded-xl font-mono self-start sm:self-auto shadow-2xs">
+                {logSearchTerm ? `พบ ${filteredLogs.length} / ทั้งหมด ${logs.length} รายการ` : `ทั้งหมด ${logs.length} รายการ`}
+              </span>
+            </div>
           </div>
 
           <div className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
@@ -518,7 +568,9 @@ export default function StockManagerPage() {
                         colSpan={4}
                         className="py-8 text-center text-slate-400 font-medium"
                       >
-                        ยังไม่มีประวัติการเพิ่มไอเทม
+                        {logSearchTerm
+                          ? `ไม่พบประวัติการทำรายการที่ตรงกับ "${logSearchTerm}"`
+                          : "ยังไม่มีประวัติการเพิ่มไอเทม"}
                       </td>
                     </tr>
                   ) : (
@@ -551,10 +603,10 @@ export default function StockManagerPage() {
             </div>
 
             {/* Pagination Controls */}
-            {logs.length > 0 && (
+            {filteredLogs.length > 0 && (
               <div className="px-6 py-4 bg-slate-50/60 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-xs text-slate-500 font-mono">
-                  แสดง {startIndex + 1} - {Math.min(startIndex + LOGS_PER_PAGE, logs.length)} จากทั้งหมด {logs.length} รายการ
+                  แสดง {startIndex + 1} - {Math.min(startIndex + LOGS_PER_PAGE, filteredLogs.length)} จากทั้งหมด {filteredLogs.length} รายการ
                 </div>
                 
                 <div className="flex items-center gap-2">
