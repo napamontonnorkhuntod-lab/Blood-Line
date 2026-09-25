@@ -12,8 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Pencil,
-  Search,
-  X
+  RotateCcw
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -132,7 +131,11 @@ export default function StockManagerPage() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isDatabaseConnected, setIsDatabaseConnected] = useState<boolean>(false);
   const [dbErrorMessage, setDbErrorMessage] = useState<string | null>(null);
-  const [logSearchTerm, setLogSearchTerm] = useState<string>("");
+
+  // Separate Filter States
+  const [filterDate, setFilterDate] = useState<string>("");
+  const [filterActor, setFilterActor] = useState<string>("");
+  const [filterItem, setFilterItem] = useState<string>("");
 
   // Load Data from Supabase with localStorage fallback
   const loadData = useCallback(async () => {
@@ -218,17 +221,41 @@ export default function StockManagerPage() {
     loadData();
   }, [loadData]);
 
-  // Filter logs by date, time, username, or item name
+  // Filter logs by date (YYYY-MM-DD input date), actor username, or item name separately
   const filteredLogs = useMemo(() => {
-    if (!logSearchTerm.trim()) return logs;
-    const term = logSearchTerm.trim().toLowerCase();
-    return logs.filter(
-      (log) =>
-        log.timestamp.toLowerCase().includes(term) ||
-        log.username.toLowerCase().includes(term) ||
-        log.itemName.toLowerCase().includes(term)
-    );
-  }, [logs, logSearchTerm]);
+    return logs.filter((log) => {
+      // 1. Filter by Date
+      if (filterDate) {
+        const parts = filterDate.split("-");
+        if (parts.length === 3) {
+          const [yyyy, mm, dd] = parts;
+          const beYear = String(Number(yyyy) + 543);
+          const dayMonth = `${dd}/${mm}`;
+          const matchCE = `${dd}/${mm}/${yyyy}`;
+          const matchBE = `${dd}/${mm}/${beYear}`;
+
+          const ts = log.timestamp;
+          const matchesDate =
+            ts.includes(matchCE) || ts.includes(matchBE) || ts.startsWith(dayMonth);
+          if (!matchesDate) return false;
+        }
+      }
+
+      // 2. Filter by Actor (Username)
+      if (filterActor.trim()) {
+        const actorTerm = filterActor.trim().toLowerCase();
+        if (!log.username.toLowerCase().includes(actorTerm)) return false;
+      }
+
+      // 3. Filter by Item Name
+      if (filterItem.trim()) {
+        const itemTerm = filterItem.trim().toLowerCase();
+        if (!log.itemName.toLowerCase().includes(itemTerm)) return false;
+      }
+
+      return true;
+    });
+  }, [logs, filterDate, filterActor, filterItem]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(filteredLogs.length / LOGS_PER_PAGE)),
@@ -244,7 +271,7 @@ export default function StockManagerPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [logSearchTerm]);
+  }, [filterDate, filterActor, filterItem]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -512,42 +539,80 @@ export default function StockManagerPage() {
           </div>
         </section>
 
-        {/* SECTION 2: Activity Audit Logs Table with Pagination & Search Filter */}
+        {/* SECTION 2: Activity Audit Logs Table with Date, Actor, Item Filter */}
         <section className="space-y-4 pt-2">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
               <History className="w-5 h-5 text-emerald-600" />
               บันทึกประวัติการทำรายการ (Activity Logs)
             </h2>
+            <span className="text-xs font-medium text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl font-mono self-start md:self-auto shadow-2xs">
+              {(filterDate || filterActor || filterItem)
+                ? `พบ ${filteredLogs.length} / ทั้งหมด ${logs.length} รายการ`
+                : `ทั้งหมด ${logs.length} รายการ`}
+            </span>
+          </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              {/* Search Filter Input Bar */}
-              <div className="relative flex-1 sm:w-72">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Search className="w-4 h-4" />
-                </div>
-                <input
-                  type="text"
-                  placeholder="ค้นหา (วัน, เวลา, ชื่อคน, ไอเทม)..."
-                  value={logSearchTerm}
-                  onChange={(e) => setLogSearchTerm(e.target.value)}
-                  className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 shadow-2xs font-medium transition-all"
-                />
-                {logSearchTerm && (
-                  <button
-                    onClick={() => setLogSearchTerm("")}
-                    className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
-                    title="ล้างคำค้นหา"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-              <span className="text-xs font-medium text-slate-500 bg-white border border-slate-200 px-3 py-2 rounded-xl font-mono self-start sm:self-auto shadow-2xs">
-                {logSearchTerm ? `พบ ${filteredLogs.length} / ทั้งหมด ${logs.length} รายการ` : `ทั้งหมด ${logs.length} รายการ`}
-              </span>
+          {/* Filter Control Bar */}
+          <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center gap-3">
+            {/* 1. Date Input Filter */}
+            <div className="flex-1 space-y-1">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                วันที่ทำรายการ (Date)
+              </label>
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 font-mono transition-all"
+              />
             </div>
+
+            {/* 2. Actor Name Input Filter */}
+            <div className="flex-1 space-y-1">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                ชื่อผู้ทำรายการ (Actor)
+              </label>
+              <input
+                type="text"
+                placeholder="พิมพ์ชื่อผู้ใช้..."
+                value={filterActor}
+                onChange={(e) => setFilterActor(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 font-medium transition-all"
+              />
+            </div>
+
+            {/* 3. Item Name Input Filter */}
+            <div className="flex-1 space-y-1">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                ชื่อไอเทม (Item Name)
+              </label>
+              <input
+                type="text"
+                placeholder="พิมพ์ชื่อไอเทม..."
+                value={filterItem}
+                onChange={(e) => setFilterItem(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 font-medium transition-all"
+              />
+            </div>
+
+            {/* Reset Filters Button */}
+            {(filterDate || filterActor || filterItem) && (
+              <div className="sm:self-end pt-1 sm:pt-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterDate("");
+                    setFilterActor("");
+                    setFilterItem("");
+                  }}
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>ล้างตัวกรอง</span>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
@@ -568,8 +633,8 @@ export default function StockManagerPage() {
                         colSpan={4}
                         className="py-8 text-center text-slate-400 font-medium"
                       >
-                        {logSearchTerm
-                          ? `ไม่พบประวัติการทำรายการที่ตรงกับ "${logSearchTerm}"`
+                        {(filterDate || filterActor || filterItem)
+                          ? "ไม่พบประวัติการทำรายการที่ตรงกับเงื่อนไขการกรอง"
                           : "ยังไม่มีประวัติการเพิ่มไอเทม"}
                       </td>
                     </tr>
