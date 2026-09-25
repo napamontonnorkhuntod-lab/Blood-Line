@@ -3,12 +3,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Package,
-  Shield,
-  Zap,
-  FlaskConical,
-  Boxes,
-  CreditCard,
-  Sparkles,
   Plus,
   Clock,
   User,
@@ -36,6 +30,23 @@ interface LogEntry {
   username: string;
   itemName: string;
   quantityAdded: number;
+}
+
+interface DbItem {
+  id: string | number;
+  name: string;
+  count: number;
+}
+
+interface DbLog {
+  id: string | number;
+  timestamp?: string;
+  username?: string;
+  item_name?: string;
+  itemName?: string;
+  quantity_added?: number;
+  quantityAdded?: number;
+  created_at?: string;
 }
 
 const INITIAL_ITEMS: Item[] = [
@@ -97,8 +108,6 @@ const INITIAL_ITEMS: Item[] = [
   },
 ];
 
-const INITIAL_LOGS: LogEntry[] = [];
-
 const LOGS_PER_PAGE = 5;
 
 // Helper function to sanitize username (trim, strip dangerous characters, limit length)
@@ -139,7 +148,7 @@ export default function StockManagerPage() {
         setIsDatabaseConnected(true);
         if (dbItems.length > 0) {
           const mappedItems = INITIAL_ITEMS.map((initItem) => {
-            const found = dbItems.find((db: any) => String(db.id) === String(initItem.id) || db.name === initItem.name);
+            const found = dbItems.find((db: DbItem) => String(db.id) === String(initItem.id) || db.name === initItem.name);
             return found ? { ...initItem, count: Number(found.count) || 0 } : initItem;
           });
           setItems(mappedItems);
@@ -155,7 +164,7 @@ export default function StockManagerPage() {
               return found ? { ...initItem, count: found.count } : initItem;
             });
             setItems(updated);
-          } catch (e) {
+          } catch {
             setItems(INITIAL_ITEMS);
           }
         } else {
@@ -173,9 +182,9 @@ export default function StockManagerPage() {
         console.error("Supabase logs fetch error:", logsErr);
         if (!itemsErr) setDbErrorMessage(`ไม่สามารถอ่าน Log จาก Supabase ได้ (${logsErr.message})`);
       } else if (dbLogs) {
-        const mappedLogs: LogEntry[] = dbLogs.map((log: any) => ({
+        const mappedLogs: LogEntry[] = dbLogs.map((log: DbLog) => ({
           id: String(log.id),
-          timestamp: log.timestamp || new Date(log.created_at).toLocaleString("th-TH"),
+          timestamp: log.timestamp || (log.created_at ? new Date(log.created_at).toLocaleString("th-TH") : ""),
           username: log.username || "Unknown",
           itemName: log.item_name || log.itemName || "Item",
           quantityAdded: Number(log.quantity_added || log.quantityAdded) || 0,
@@ -186,16 +195,17 @@ export default function StockManagerPage() {
         if (savedLogs) {
           try {
             setLogs(JSON.parse(savedLogs));
-          } catch (e) {
+          } catch {
             setLogs([]);
           }
         } else {
           setLogs([]);
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn("Supabase load fallback to localStorage", err);
-      setDbErrorMessage(`เกิดข้อผิดพลาดในการเชื่อมต่อ Supabase: ${err?.message || "Unknown error"}`);
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setDbErrorMessage(`เกิดข้อผิดพลาดในการเชื่อมต่อ Supabase: ${msg}`);
     } finally {
       setIsLoaded(true);
     }
@@ -327,7 +337,7 @@ export default function StockManagerPage() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-emerald-100 selection:text-emerald-900">
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-
+        
         {/* Top Header & Active User Box */}
         <header className="bg-white border border-slate-200/80 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
@@ -419,6 +429,7 @@ export default function StockManagerPage() {
                   {/* Item Image */}
                   <div className="flex justify-center mb-4">
                     <div className="w-24 h-24 sm:w-28 sm:h-28 p-2 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={item.image || `/image/${item.id}.png`}
                         alt={item.name}
@@ -545,7 +556,7 @@ export default function StockManagerPage() {
                 <div className="text-xs text-slate-500 font-mono">
                   แสดง {startIndex + 1} - {Math.min(startIndex + LOGS_PER_PAGE, logs.length)} จากทั้งหมด {logs.length} รายการ
                 </div>
-
+                
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -564,10 +575,11 @@ export default function StockManagerPage() {
                         key={page}
                         type="button"
                         onClick={() => setCurrentPage(page)}
-                        className={`w-8 h-8 rounded-lg text-xs font-semibold font-mono transition-all cursor-pointer ${currentPage === page
-                          ? "bg-emerald-600 text-white font-bold shadow-2xs"
-                          : "bg-white border border-slate-200 hover:bg-slate-50 text-slate-600"
-                          }`}
+                        className={`w-8 h-8 rounded-lg text-xs font-semibold font-mono transition-all cursor-pointer ${
+                          currentPage === page
+                            ? "bg-emerald-600 text-white font-bold shadow-2xs"
+                            : "bg-white border border-slate-200 hover:bg-slate-50 text-slate-600"
+                        }`}
                       >
                         {page}
                       </button>
